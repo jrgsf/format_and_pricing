@@ -23,7 +23,7 @@ raw_dfs = {}
 for s in xl.sheet_names:
     if 'summary' not in s:  ## only have one sheet for testing -- comment out when ready
         raw_dfs["raw_df_{0}".format(s)]=xl.parse(s)
-        break ## only have one sheet for testing -- comment out when ready
+        # break ## only have one sheet for testing -- comment out when ready
 
 ## creates dataframe of initial Output file
 orig_output_df = xlo.parse(xlo.sheet_names[0])
@@ -89,47 +89,46 @@ def confirm_duplicate_row(dupe_rows, day_only):
   return fatal
 
 def populate_output(empty_output, raw):
-  print "starting, copying empty_output"
   populated_output = empty_output
   extra_row_warning = []
   for i, row in empty_output.iterrows():
-    print "starting row loop of ", i, row[0]
     yesterday = False
     if row[0] == row[0] - datetime.timedelta(hours=row[0].hour, minutes=row[0].minute):
       day_only = row[0] - datetime.timedelta(days=1)
       yesterday = True
     else:
       day_only = row[0] - datetime.timedelta(hours=row[0].hour, minutes=row[0].minute)
-    # hr = str(row[0])[11:13]
-    # min = str(row[0])[14:16]
+    hr = int(str(row[0])[11:13])
+    min = int(str(row[0])[14:16])
     import_row = raw[(raw.INTRVL_DATE == day_only) & (raw.CHNL_ID == 101)]
     export_row = raw[(raw.INTRVL_DATE == day_only) & (raw.CHNL_ID == 102)]
     ### deals with cases where >1 row per date per CHNL_ID
     if len(import_row) > 1 or len(export_row) > 1:
       if [day_only, len(import_row), len(export_row)] not in extra_row_warning:
-        extra_row_warning.append([day_only, len(import_row), len(export_row)])
+        extra_row_warning.append([day_only.date(), len(import_row), len(export_row)])
       confirm_import_dupe = confirm_duplicate_row(import_row, day_only)
       confirm_export_dupe = confirm_duplicate_row(export_row, day_only)
       if confirm_import_dupe or confirm_export_dupe:
         print 'FATAL ERROR: Extra rows for {0} contain different raw data.'.format(day_only)
         sys.exit()
-    ### cycles through all columns with 15minute usage data
-    print "starting col loop"
-    for col in range (10, 106):
-        try:
-          float(import_row.iloc[0][col])
-          print "data point: ", import_row.iloc[0][col]
-          populated_output.at[i, 'CHNL_ID 101 (kW)'] = import_row.iloc[0][col] * 4
-        except:
-          populated_output.at[i, 'CHNL_ID 101 (kW)'] = np.nan
-          print "WARNING: non-numerical raw data '{0}' at {1}, CHNL_ID 101, {2}".format(import_row.iloc[0][col], day_only, col)
-        try:
-          float(export_row.iloc[0][col])
-          populated_output.at[i, 'CHNL_ID 102 (kW)'] = export_row.iloc[0][col] * 4
-          populated_output.at[i, 'Net Usage (kWh)'] = import_row.iloc[0][col] - export_row.iloc[0][col]
-        except:
-          populated_output.at[i, 'CHNL_ID 102 (kW)'] = np.nan
-          print "WARNING: non-numerical raw data '{0}' at {1}, CHNL_ID 102, {2}".format(export_row.iloc[0][col], day_only, col)
+    if hr == 0 and min == 0:
+        col = 105
+    else:
+        col = (hr * 4 + (min / 15 - 1)) + 10
+    # print row[0], raw.columns[col]  ### to check that we're grabbing the correct column!
+    try:
+        float(import_row.iloc[0][col])
+        populated_output.at[i, 'CHNL_ID 101 (kW)'] = import_row.iloc[0][col] * 4
+    except:
+        populated_output.at[i, 'CHNL_ID 101 (kW)'] = np.nan
+        print "WARNING: non-numerical raw data '{0}' at {1}, CHNL_ID 101".format(import_row.iloc[0][col], day_only)
+    try:
+        float(export_row.iloc[0][col])
+        populated_output.at[i, 'CHNL_ID 102 (kW)'] = export_row.iloc[0][col] * 4
+        populated_output.at[i, 'Net Usage (kWh)'] = import_row.iloc[0][col] - export_row.iloc[0][col]
+    except:
+      populated_output.at[i, 'CHNL_ID 102 (kW)'] = np.nan
+      print "WARNING: non-numerical raw data '{0}' at {1}, CHNL_ID 102".format(export_row.iloc[0][col], day_only)
   ### adds final row with totals
   populated_output = populated_output.append(populated_output.sum(numeric_only=True), ignore_index=True)
   if extra_row_warning:
@@ -137,16 +136,6 @@ def populate_output(empty_output, raw):
       print 'WARNING: Raw data contains too many rows for {0}: {1} for CHNL_ID 101; {2} for CHNL_ID 102 \nData in duplicated rows is identical in all columns. This will not affect output.'.format(w[0], w[1], w[2])
   return populated_output
 
-
-
-# tests:
-# populate_output(tt, bad10)
-# populate_output(tt, mini10)
-# populate_output(empty_output_dfs["Account 2"], raw_dfs["raw_df_2"])
-# populate_output(empty_output_dfs["Account 4"], raw_dfs["raw_df_4"])
-# populate_output(empty_output_dfs["Account 6"], raw_dfs["raw_df_6"])
-# populate_output(empty_output_dfs["Account 9"], raw_dfs["raw_df_9"])
-# populate_output(empty_output_dfs["Account 10"], raw_dfs["raw_df_10"])
 
 empty_output_dfs = {}
 for k in raw_dfs.keys():
@@ -159,14 +148,13 @@ final_output_files = {}
 for rk, rv in raw_dfs.iteritems():
   for pk, pv in empty_output_dfs.iteritems():
     if rk[7:] == pk[8:]:
-      print "Begin Processing raw file for {0}".format(pk)
-      print rk, pk
+      print "Begin Processing raw file for {0} at {1}".format(pk,  datetime.datetime.now().time())
       final_output_files[pk] = populate_output(pv, rv)
-      pv.to_excel(writer, pk)
+      final_output_files[pk].to_excel(writer, pk)
       worksheet = writer.sheets[pk]
       for a in ascii_uppercase:
         worksheet.set_column('{0}:{1}'.format(a,a), 24)
-      print "Output file for {0} ready".format(pk)
+      print "Output file for {0} ready at {1}".format(pk,  datetime.datetime.now().time())
       print "#############################################"
 
 writer.save()
@@ -241,7 +229,6 @@ def check_cpp(billing_period):
   for i, period in aux_data["CPP_events"].iterrows():
     if billing_period > period[0] and billing_period - datetime.timedelta(minutes=15) < period[1]:
       cpp = True
-      # print "{0} btwn {1} and {2}".format(billing_period, period[0], period[1])
       break
     else: cpp = False
   return cpp
@@ -304,7 +291,9 @@ def add_to_master_summary(name, f):
 
 for name, outpt_f in final_output_files.items():
   print "Calculating costs for {0}".format(name)
+  print datetime.datetime.now().time()
   all_calculations(outpt_f)
+  print datetime.datetime.now().time()
   print "{0} complete".format(name)
   print "============================================================="
   outpt_f.to_excel(writer, name)
@@ -313,6 +302,7 @@ for name, outpt_f in final_output_files.items():
     worksheet.set_column('{0}:{1}'.format(a,a), 24)
   add_to_master_summary(name, outpt_f)
 
+master_summary = master_summary.append(master_summary.sum(numeric_only=True), ignore_index=True)
 master_summary.to_excel(writer, "master summary")
 master_worksheet = writer.sheets["master summary"]
 for a in ascii_uppercase:
